@@ -112,6 +112,16 @@ class MergeUserTool
     protected $tablesProcessedByTableMergers;
 
     /**
+     * @var bool if true then never commit the transaction, used for testing.
+     */
+    protected $alwaysRollback;
+
+    /**
+     * @var bool if true then write out all sql, used for testing.
+     */
+    protected $debugdb;
+
+    /**
      * Initializes
      * @global object $CFG
      * @param tool_mergeusers_config $config local configuration.
@@ -191,6 +201,9 @@ class MergeUserTool
         $this->tableMergers = $tableMergers;
         $this->tablesProcessedByTableMergers = array_flip($tablesProcessedByTableMergers);
 
+        $this->alwaysRollback = !empty($config->alwaysRollback);
+        $this->debugdb = !empty($config->debugdb);
+
         // this will abort execution if local database is not supported.
         $this->checkDatabaseSupport();
 
@@ -263,6 +276,15 @@ class MergeUserTool
         // first of all... initialization!
         $errorMessages = array();
         $actionLog = array();
+
+        if ($this->debugdb) {
+            $DB->set_debug(true);
+        }
+
+        $startTime = time();
+        $startTimeString = get_string('starttime', 'tool_mergeusers', userdate($startTime));
+        $actionLog[] = $startTimeString;
+
         $transaction = $DB->start_delegated_transaction();
 
         try {
@@ -296,6 +318,14 @@ class MergeUserTool
                     $e->getTraceAsString() . html_writer::empty_tag('br'));
         }
 
+        if ($this->debugdb) {
+            $DB->set_debug(false);
+        }
+
+        if ($this->alwaysRollback) {
+            $transaction->rollback(new Exception('alwaysRollback option is set so rolling back transaction'));
+        }
+
         // concludes with true if no error
         if (empty($errorMessages)) {
             $transaction->allow_commit();
@@ -306,6 +336,10 @@ class MergeUserTool
                 $skippedTables[] = get_string('tableskipped', 'tool_mergeusers', implode(", ", $this->tablesSkipped));
             }
 
+            $finishTime = time();
+            $actionLog[] = get_string('finishtime', 'tool_mergeusers', userdate($finishTime));
+            $actionLog[] = get_string('timetaken', 'tool_mergeusers', $finishTime - $startTime);
+
             return array(true, array_merge($skippedTables, $actionLog));
         } else {
             try {
@@ -314,6 +348,10 @@ class MergeUserTool
             } catch (Exception $e) { /* do nothing, just for correctness */
             }
         }
+
+        $finishTime = time();
+        $errorMessages[] = $startTimeString;
+        $errorMessages[] = get_string('timetaken', 'tool_mergeusers', $finishTime - $startTime);
 
         // concludes with an array of error messages otherwise.
         return array(false, $errorMessages);
